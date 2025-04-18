@@ -62,8 +62,6 @@ This project utilizes a hybrid data pipeline architecture, combining elements of
    *    Airflow ensures that batch processing in Snowflake only  happens after the corresponding data segment has been successfully streamed, maintaining data consistency for the batch layer. (Note: Airflow does not directly orchestrate the continuous Flink stream processing or the Snowflake Sink connectors, which operate based on data availability in Kafka).
 
 
-Okay, here's the template filled out based on the details you provided about your project:
-
 ### Technologies Used
 
 * **Cloud Provider:** **Confluent Cloud** Note: Confluent Cloud is a managed cloud service that runs on underlying providers. I opted to use AWS for this.
