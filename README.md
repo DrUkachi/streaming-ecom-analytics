@@ -102,13 +102,133 @@ The dashboard consists of 5 tiles:
 
 ## Reproducibility
 
-[Provide clear and concise instructions on how to run the code and reproduce the results.  This is critical for the evaluation. Be sure to include:]
+## Reproducibility
 
-1.  **Prerequisites:** [List all necessary software and dependencies.]
-2.  **Setup:** [Describe how to set up the environment, including configuring access to cloud services and installing dependencies.]
-3.  **Execution:** [Provide step-by-step instructions on how to run the code, including any necessary commands and configurations.]
+These instructions outline the steps necessary to set up the environment, run the code, and reproduce the results of the E-commerce Stream Analytics project.
 
-[The instructions should be complete and easy to follow so that someone else can easily run your project.]
+**1. Prerequisites:**
+
+* **Software:**
+    * Git
+    * Python (3.8+ recommended) & pip package manager
+    * Docker & Docker Compose
+    * Java Development Kit (JDK) (Required for PySpark, check compatibility with your PySpark version)
+    * Apache Spark (including PySpark, matching your cluster or local setup if applicable)
+    * (Optional but Recommended) Snowflake SnowSQL CLI
+    * (Optional but Recommended) Kafka CLI tools (often bundled with Kafka or available from Confluent)
+* **Cloud Accounts & Services:**
+    * **Confluent Cloud Account:** With access to create/manage Kafka Clusters, Topics, Flink SQL Workspaces, Schema Registry, and API Keys/Secrets. Ensure your plan supports the required throughput and Flink usage.
+    * **Snowflake Account:** With permissions to create databases, schemas, tables, warehouses, users, roles, and manage access.
+    * **(Optional) AWS Account:** If hosting Airflow/Metabase on EC2, or running PySpark on EMR, etc. (The document notes Confluent Cloud was run on AWS).
+* **Data Access:**
+    * Ability to download the [eCommerce Behavior Data](https://www.kaggle.com/mkechinov/ecommerce-behavior-data-from-multi-category-store/metadata) dataset (originally linked from [Open CDP](https://data.rees46.com/datasets/marketplace/)). Note: This is a large dataset requiring significant download time and storage space.
+* **Code:**
+    * Access to this project's code repository.
+
+**2. Setup:**
+
+1.  **Clone Repository:**
+    ```bash
+    git clone <your_repository_url>
+    cd <repository_directory>
+    ```
+2.  **Install Python Dependencies:** (Ensure you have a `requirements.txt` file listing libraries like `confluent-kafka`, `pandas`, etc.)
+    ```bash
+    pip install -r requirements.txt
+    ```
+3.  **Download & Prepare Data:**
+    * Download the compressed CSV files (`.csv.gz`) for Oct 2019 - Apr 2020 from the source.
+    * Place the downloaded files into a designated directory, e.g., `data/raw/`.
+4.  **PySpark Environment:**
+    * Ensure Apache Spark (with PySpark) and a compatible Java JDK are correctly installed and configured in your environment (local machine or cluster). Verify environment variables like `SPARK_HOME` and `JAVA_HOME` are set.
+    * *Note: Processing the full dataset requires substantial memory and CPU resources.*
+5.  **Confluent Cloud Configuration:**
+    * Log in to your Confluent Cloud account.
+    * Create a Kafka Cluster if one doesn't exist. Note the **Bootstrap Servers**.
+    * Create an **API Key and Secret** for Kafka access. Securely store these credentials.
+    * Enable **Schema Registry**. Note the **Schema Registry endpoint and API Key/Secret** (if different).
+    * Create two Kafka **Topics**:
+        * `ecommerce_raw_events` (or your chosen name for raw data)
+        * `ecommerce_aggregated_events` (or your chosen name for Flink output)
+    * Set up a **Flink SQL Workspace**.
+6.  **Snowflake Configuration:**
+    * Log in to your Snowflake account (using the UI or SnowSQL).
+    * Create a **Warehouse** (e.g., `ANALYTICS_WH`).
+    * Create a **Database** (e.g., `ECOMMERCE_DB`).
+    * Create **Schemas**: `RAW`, `PROCESSED`, `REPORTING`.
+    * Define and create the target **Tables** within the `RAW` and `PROCESSED` schemas that the Snowflake Sink connectors will write to. Ensure data types match the expected JSON/AVRO structures.
+    * Create a **User** (e.g., `KAFKA_CONNECTOR_USER`, `AIRFLOW_USER`) and a **Role** (e.g., `PIPELINE_ROLE`). Grant necessary privileges to the role (e.g., `USAGE` on DB/Schema, `INSERT`, `SELECT`, `CREATE TABLE` etc. on relevant tables) and assign the role to the users. Securely store user credentials (password or private key). Note your **Snowflake Account Identifier** (e.g., `xy12345.eu-central-1`).
+7.  **Confluent Cloud Snowflake Sink Connectors:**
+    * Navigate to Connectors in your Confluent Cloud cluster UI.
+    * Launch and configure the **Snowflake Sink Connector** twice:
+        * **Connector 1 (Raw Data):**
+            * **Input Topic:** `ecommerce_raw_events`
+            * **Value Format:** `JSON`
+            * **Snowflake Connection:** Provide URL (e.g., `<account_identifier>.snowflakecomputing.com`), User, Role, Private Key/Password.
+            * **Target:** Database `ECOMMERCE_DB`, Schema `RAW`. Configure table mapping (e.g., topic name to table name).
+        * **Connector 2 (Aggregated Data):**
+            * **Input Topic:** `ecommerce_aggregated_events`
+            * **Value Format:** `AVRO`
+            * **Schema Registry:** Provide SR endpoint and credentials.
+            * **Snowflake Connection:** Use the same credentials/details as above.
+            * **Target:** Database `ECOMMERCE_DB`, Schema `PROCESSED`. Configure table mapping.
+    * Ensure both connectors launch successfully and are in a `RUNNING` state.
+8.  **Apache Airflow Setup (using Docker):**
+    * Navigate to the directory containing your Airflow `docker-compose.yaml` file (e.g., `airflow/`).
+    * Prepare environment variables: Create a `.env` file or modify `docker-compose.yaml` to securely inject necessary credentials and configurations:
+        * Confluent Cloud Bootstrap Servers, API Key/Secret.
+        * Snowflake Account Identifier, User, Password/Private Key, Role, Warehouse, Database, Schema (for transformations).
+        * Paths to data directories if needed by the producer script.
+    * Initialize Airflow (if first time setup, includes creating metadata DB, user): Follow standard Airflow Docker setup instructions (often involves `docker-compose up airflow-init`).
+    * Start Airflow services:
+        ```bash
+        docker-compose up -d
+        ```
+    * Access the Airflow UI (usually `http://localhost:8080`).
+    * Configure Airflow **Connections**:
+        * Create a `confluent_cloud_default` connection (type Kafka) using your bootstrap servers and API key/secret (via SASL/PLAIN).
+        * Create a `snowflake_default` connection (type Snowflake) using your account identifier, login (user), password/private key path, role, warehouse, database, schema.
+    * Ensure your DAG file (e.g., `dags/ecommerce_pipeline_dag.py`) is in the correct `dags` folder mapped in your `docker-compose.yaml`.
+9.  **Metabase Setup:**
+    * Run Metabase locally via Docker or use a hosted instance.
+    * Connect Metabase to your Snowflake instance:
+        * Add a database connection.
+        * Select Snowflake.
+        * Provide connection details (Account Identifier, User, Password, Role, Warehouse, Database).
+        * Ensure Metabase can connect and introspect the `PROCESSED` and `REPORTING` schemas.
+    * Recreate the dashboard tiles based on the descriptions provided, querying the appropriate tables in Snowflake.
+
+**3. Execution:**
+
+1.  **Initial Data Processing (PySpark):**
+    * Execute your PySpark script (e.g., `scripts/initial_process.py`) to process the raw `.csv.gz` files from `data/raw/` and output the cleaned/structured data to a location accessible by the Kafka producer (e.g., `data/processed/`).
+    * Example command (adjust based on your script and Spark setup):
+        ```bash
+        spark-submit --master local[*] scripts/initial_process.py --input data/raw/ --output data/processed/
+        ```
+    * *Ensure this completes successfully before proceeding.*
+2.  **Deploy and Run Flink SQL Job(s):**
+    * Access your Flink SQL Workspace in Confluent Cloud.
+    * Paste, configure, and run the Flink SQL statement(s) that:
+        * Read from the `ecommerce_raw_events` topic (as JSON).
+        * Perform the required real-time aggregations/transformations.
+        * Write the results to the `ecommerce_aggregated_events` topic (as AVRO, defining the schema).
+    * Ensure the Flink job is running continuously.
+3.  **Start & Monitor Airflow Pipeline:**
+    * In the Airflow UI, locate your e-commerce pipeline DAG.
+    * Ensure the DAG is unpaused (toggle switch is on).
+    * The DAG should start running based on its schedule (3-hour interval). Monitor its progress:
+        * **Task 1 (Kafka Producer):** Verify logs indicate successful streaming of data segments to the `ecommerce_raw_events` topic.
+        * **Task 2 (Snowflake Batch):** After Task 1 succeeds, verify logs show successful execution of SQL transformations against the `RAW` data in Snowflake, updating tables in the `REPORTING` schema.
+4.  **Monitor End-to-End Flow:**
+    * **Kafka:** Check message counts on topics in Confluent Cloud.
+    * **Connectors:** Ensure the Snowflake Sink connectors remain in a `RUNNING` state without errors.
+    * **Snowflake:** Query tables in `RAW`, `PROCESSED`, and `REPORTING` schemas to verify data is arriving and being transformed as expected.
+    * **Flink:** Monitor the Flink job for any errors or backpressure.
+5.  **View Dashboard:**
+    * Open your Metabase instance.
+    * Navigate to the dashboard created in the setup phase.
+    * Data should populate the visualizations. The tiles querying `PROCESSED` data reflect the near real-time Flink pipeline, while tiles querying `REPORTING` data reflect the Airflow-orchestrated batch updates. Refresh intervals in Metabase may affect perceived latency.
 
 ## Challenges and Lessons Learned
 
@@ -120,8 +240,3 @@ The dashboard consists of 5 tiles:
 
 * **Challenge:** Setting up the Apache Airflow environment correctly using Docker was challenging as it had been some time since I last worked extensively with this specific technology stack. I resolved this by reviewing current Docker and Airflow documentation, configuration best practices, and examples, which allowed me to successfully configure the necessary environment. I learned (or refreshed my knowledge on) the specifics of setting up Airflow within Docker and reinforced the need to consult up-to-date documentation when returning to technologies after a period of non-use.
 
-## Acknowledgements
-
-[Acknowledge any individuals or resources that helped you with this project.]
-
-## Repository Structure
