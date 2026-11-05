@@ -1,0 +1,48 @@
+name: ecommerce_analytics
+version: "1.0.0"
+config-version: 2
+
+profile: ecommerce_analytics
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  top_brands_limit: 10
+
+models:
+  ecommerce_analytics:
+    staging:
+      +schema: STAGING
+      +materialized: view
+    intermediate:
+      +schema: STAGING
+      +materialized: view
+    marts:
+      +schema: REPORTING
+      +materialized: table
+
+seeds:
+  ecommerce_analytics:
+    # Sample events used only for local development and CI on DuckDB.
+    # In production the source is the real Kafka sink table in Snowflake.
+    sample_raw_events:
+      +enabled: "{{ target.type == 'duckdb' }}"
+      +schema: RAW
+      +alias: VIEW_KAFKA_ECOMMERCE_STREAM
+      +column_types:
+        event_time: timestamp
+        create_time: timestamp
+        event_type: varchar
+        product_id: varchar
+        category_id: varchar
+        category_code: varchar
+        brand: varchar
+        price: double
+        user_id: varchar
+        user_session: varchar

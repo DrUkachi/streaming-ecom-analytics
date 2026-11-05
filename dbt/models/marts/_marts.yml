@@ -1,0 +1,106 @@
+version: 2
+
+models:
+  - name: fct_daily_revenue
+    description: Purchase revenue per day. Feeds the "Daily Revenue" dashboard tile.
+    columns:
+      - name: event_date
+        tests:
+          - unique
+          - not_null
+      - name: total_revenue
+        description: Sum of purchase prices that day, in USD.
+        tests:
+          - not_null
+          - non_negative
+      - name: purchase_events
+        tests:
+          - non_negative
+
+  - name: mart_top_selling_brands
+    description: Top brands by purchase revenue. Feeds the "Top Selling Brands" dashboard tile.
+    columns:
+      - name: brand
+        description: Brand name, or "unknown" when the event has no brand.
+        tests:
+          - unique
+          - not_null
+      - name: revenue
+        tests:
+          - not_null
+          - non_negative
+      - name: revenue_rank
+        tests:
+          - unique
+          - between:
+              min_value: 1
+              max_value: "{{ var('top_brands_limit', 10) }}"
+
+  - name: mart_conversion_funnel
+    description: >
+      Event volume and session reach at each funnel step (view, cart, purchase),
+      with conversion measured against sessions that viewed a product.
+    columns:
+      - name: event_type
+        tests:
+          - unique
+          - accepted_values:
+              values: ['view', 'cart', 'purchase']
+      - name: event_count
+        tests:
+          - non_negative
+      - name: pct_of_view_sessions
+        description: Share of viewing sessions that reached this step (0 to 1).
+        tests:
+          - between:
+              min_value: 0
+              max_value: 1
+
+  - name: mart_abandoned_cart_users
+    description: Users who added items to a cart but never made a purchase, for retention targeting.
+    columns:
+      - name: user_id
+        tests:
+          - unique
+          - not_null
+      - name: cart_events
+        tests:
+          - non_negative
+
+  - name: mart_average_order_value_daily
+    description: Average revenue per purchasing session (order) per day.
+    columns:
+      - name: event_date
+        tests:
+          - unique
+          - not_null
+      - name: average_order_value
+        tests:
+          - non_negative
+
+  - name: mart_daily_active_users_by_event_type
+    description: Distinct users and sessions per day and event type.
+    tests:
+      - unique_combination:
+          combination_of_columns: ['event_date', 'event_type']
+    columns:
+      - name: daily_active_users
+        tests:
+          - non_negative
+      - name: daily_sessions
+        tests:
+          - non_negative
+
+exposures:
+  - name: ecommerce_metabase_dashboard
+    label: E-commerce performance dashboard (Metabase)
+    type: dashboard
+    maturity: medium
+    description: Metabase dashboard with revenue by category, top selling brands and daily revenue tiles.
+    owner:
+      name: Ukachi Osisiogu
+    depends_on:
+      - ref('fct_daily_revenue')
+      - ref('mart_top_selling_brands')
+      - ref('mart_conversion_funnel')
+      - ref('mart_average_order_value_daily')
