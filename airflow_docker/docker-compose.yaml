@@ -37,6 +37,7 @@ x-airflow-common:
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/opt/airflow/requirements.txt
     - ./data:/opt/data 
+    - ../dbt:/opt/airflow/dbt
 
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
@@ -84,6 +85,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./requirements.txt:/opt/airflow/requirements.txt
       - ./data:/opt/data 
+      - ../dbt:/opt/airflow/dbt
 
 
   airflow-scheduler:
@@ -108,6 +110,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./requirements.txt:/opt/airflow/requirements.txt
       - ./data:/opt/data 
+      - ../dbt:/opt/airflow/dbt
 
 
   airflow-triggerer:
@@ -131,6 +134,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./requirements.txt:/opt/airflow/requirements.txt
       - ./data:/opt/data 
+      - ../dbt:/opt/airflow/dbt
 
 
   airflow-init:
@@ -198,6 +202,7 @@ services:
       - ./plugins:/sources/plugins
       - ./requirements.txt:/requirements.txt
       - ./data:/opt/data 
+      - ../dbt:/opt/airflow/dbt
 
   airflow-cli:
     <<: *airflow-common

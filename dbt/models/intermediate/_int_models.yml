@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: int_sessions
+    description: One row per browsing session, flagging whether it reached view, cart and purchase.
+    columns:
+      - name: user_session
+        tests:
+          - unique
+          - not_null
+      - name: purchase_revenue
+        tests:
+          - non_negative

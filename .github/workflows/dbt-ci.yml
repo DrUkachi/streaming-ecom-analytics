@@ -1,0 +1,36 @@
+name: dbt CI
+
+on:
+  pull_request:
+    paths: ["dbt/**", ".github/workflows/dbt-ci.yml"]
+  push:
+    branches: [main]
+    paths: ["dbt/**", ".github/workflows/dbt-ci.yml"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dbt
+    env:
+      DBT_PROFILES_DIR: .
+      DBT_TARGET: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dbt
+        run: pip install "dbt-core~=1.9.0" "dbt-duckdb~=1.9.0"
+
+      - name: Load sample events
+        run: dbt seed --target ci
+
+      - name: Build models and run all data tests
+        run: dbt build --target ci
+
+      - name: Generate documentation
+        run: dbt docs generate --target ci

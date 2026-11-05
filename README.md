@@ -57,7 +57,7 @@ This project utilizes a hybrid data pipeline architecture, combining elements of
         1.   Triggering the **Python Kafka producer script** to simulate the streaming of a segment of historical data into Confluent Cloud Kafka.
 
 
-        2.   **Upon successful completion** of the data streaming task, triggering the **Snowflake SQL batch transformation jobs** (e.g., stored procedures or SQL scripts) to process the newly arrived raw data in Snowflake, refreshing or recreating the tables used for batch analysis and the Metabase dashboard.
+        2.   **Upon successful completion** of the data streaming task, running **`dbt source freshness`** and **`dbt build`**, which rebuild the staging and `REPORTING` tables in Snowflake and run every data test before the Metabase dashboard reads them (see [Transformations with dbt](#transformations-with-dbt)).
 
    *    Airflow ensures that batch processing in Snowflake only  happens after the corresponding data segment has been successfully streamed, maintaining data consistency for the batch layer. (Note: Airflow does not directly orchestrate the continuous Flink stream processing or the Snowflake Sink connectors, which operate based on data availability in Kafka).
 
@@ -67,10 +67,10 @@ This project utilizes a hybrid data pipeline architecture, combining elements of
 * **Cloud Provider:** **Confluent Cloud** Note: Confluent Cloud is a managed cloud service that runs on underlying providers. I opted to use AWS for this.
 * **Infrastructure as Code (IaC):** **None**
 
-* **Workflow Orchestration:** **Airflow** (Apache Airflow used to schedule the Kafka producer script and the Snowflake batch transformation jobs).
+* **Workflow Orchestration:** **Airflow** (Apache Airflow used to schedule the Kafka producer script and the dbt transformation and test runs).
 
 * **Data Warehouse:** **Snowflake** (Used as the central repository for both raw event data and processed/aggregated data).
-* **Batch Processing:** **PySpark** (Used for initial processing of large raw CSV files before streaming), **Snowflake SQL** (Used for batch transformations triggered by Airflow within the data warehouse).
+* **Batch Processing:** **PySpark** (Used for initial processing of large raw CSV files before streaming), **dbt** (Models the Snowflake `REPORTING` layer as tested, documented SQL, run by Airflow).
 * **Stream Processing:** **Kafka** (Specifically Confluent Cloud Kafka for messaging/event streaming), **Flink** (Specifically Flink SQL on Confluent Cloud for real-time analytics on the Kafka stream).
 * **Dashboarding Tool:** **Metabase** (For visualizing the results of the batch and near-real time processing).
 * **Other Tools:**
@@ -87,6 +87,54 @@ This project utilizes a hybrid data pipeline architecture, combining elements of
 * **AVRO (Apache Avro):** A data serialization system that uses schemas (typically defined in JSON) to structure data. It's efficient for storage and transmission, supports schema evolution (handling changes in data structure over time), and integrates well with systems like Kafka and Hadoop. It is required by Confluent Cloud's Schema Registry to create 'Data Contracts'.
 
 * **Confluent Snowflake Sink Connector:** Part of the Kafka Connect framework, this specific connector is optimized to stream data from Kafka topics directly into Snowflake tables, handling schema mapping and data loading automatically.
+
+## Transformations with dbt
+
+The batch reporting layer is a dbt project in [`dbt/`](dbt/). It replaces the hand-written `TRUNCATE` and `INSERT` jobs that Airflow used to run against Snowflake.
+
+```
+RAW.VIEW_KAFKA_ECOMMERCE_STREAM          (Kafka -> Snowflake Sink Connector)
+        |
+        v
+STAGING.stg_kafka__ecommerce_events      typed, cleaned, deduplicated, one row per event
+        |
+        +--> STAGING.int_sessions         one row per session with funnel flags
+        |
+        v
+REPORTING.DAILY_REVENUE                  REPORTING.TOP_SELLING_BRANDS
+REPORTING.CONVERSION_FUNNEL              REPORTING.ABANDONED_CART_USERS
+REPORTING.AVERAGE_ORDER_VALUE_DAILY      REPORTING.DAILY_ACTIVE_USERS_BY_EVENT_TYPE
+        |
+        v
+Metabase dashboard (declared as a dbt exposure)
+```
+
+**What it adds over the previous SQL jobs**
+
+* **One place for business logic.** Every reporting table reads from the same staging model, so price, brand and event-type cleaning is defined once. The reporting tables keep their original names, so the Metabase dashboard needs no changes.
+* **45 data tests.** `not_null`, `unique` and `accepted_values` tests on sources and models, custom `non_negative`, `between` and `unique_combination` tests, plus a reconciliation test that checks daily revenue adds up to total purchase value. Because `dbt build` tests each model before building the next, bad source data stops the run before it reaches the dashboard.
+* **Freshness monitoring.** `dbt source freshness` warns if the sink connector has not landed new events in 6 hours and fails after 24.
+* **Deduplication.** Retried producer batches no longer double count revenue.
+* **Two logic fixes.** Abandoned carts now use `NOT EXISTS` instead of `NOT IN`, which returns no rows if any `user_id` is null. Daily active users now counts distinct users, with sessions reported separately; the old query counted sessions and labelled them users.
+* **Documentation and lineage.** Every model and column is described, and `dbt docs generate` produces a browsable lineage graph.
+
+**Running it**
+
+```bash
+cd dbt
+pip install "dbt-core~=1.9.0" "dbt-snowflake~=1.9.0" "dbt-duckdb~=1.9.0"
+
+# Local / CI: DuckDB with a small sample of events (no Snowflake needed)
+python scripts/make_sample_events.py   # regenerates seeds/sample_raw_events.csv
+DBT_PROFILES_DIR=. dbt seed --target ci
+DBT_PROFILES_DIR=. dbt build --target ci
+
+# Production: Snowflake, using the same SNOWFLAKE_* environment variables as Airflow
+DBT_PROFILES_DIR=. dbt source freshness --target prod
+DBT_PROFILES_DIR=. dbt build --target prod
+```
+
+The raw table location defaults to `RAW.VIEW_KAFKA_ECOMMERCE_STREAM` and can be changed with the `DBT_RAW_SCHEMA` and `DBT_RAW_EVENTS_TABLE` environment variables. In Docker, the project is mounted at `/opt/airflow/dbt` and dbt runs from its own virtualenv so its dependencies never clash with Airflow's. A GitHub Actions workflow runs the full build and test suite on DuckDB for every pull request that touches `dbt/`.
 
 ## Dashboard
 
@@ -220,7 +268,7 @@ These instructions outline the steps necessary to set up the environment, run th
     * Ensure the DAG is unpaused (toggle switch is on).
     * The DAG should start running based on its schedule (3-hour interval). Monitor its progress:
         * **Task 1 (Kafka Producer):** Verify logs indicate successful streaming of data segments to the `ecommerce_raw_events` topic.
-        * **Task 2 (Snowflake Batch):** After Task 1 succeeds, verify logs show successful execution of SQL transformations against the `RAW` data in Snowflake, updating tables in the `REPORTING` schema.
+        * **Task 2 (dbt):** After Task 1 succeeds, check the `dbt_source_freshness` and `dbt_build` task logs: every model should build and every test should pass, updating tables in the `REPORTING` schema.
 4.  **Monitor End-to-End Flow:**
     * **Kafka:** Check message counts on topics in Confluent Cloud.
     * **Connectors:** Ensure the Snowflake Sink connectors remain in a `RUNNING` state without errors.
@@ -249,4 +297,13 @@ streaming-ecom-analytics
 │   │   └───utils
 │   ├───data
 │   └───logs
+├───dbt
+│   ├───models
+│   │   ├───staging
+│   │   ├───intermediate
+│   │   └───marts
+│   ├───macros
+│   ├───seeds
+│   ├───scripts
+│   └───tests
 └───images

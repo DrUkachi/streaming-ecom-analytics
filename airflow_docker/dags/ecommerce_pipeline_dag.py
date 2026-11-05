@@ -1,5 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import timedelta
 
@@ -9,10 +10,15 @@ from pyspark.sql import SparkSession
 # Import your modules
 from ecomm_pipeline.extractor import MonthlyExtractor
 from ecomm_pipeline.producer import send_to_kafka
-from ecomm_pipeline.snowflake import validate_data, materialize_views
 
 # Constants
 DATA_FOLDER = "/opt/data"
+
+# dbt project mounted from ../dbt; artifacts go to /tmp so the mount stays clean
+DBT = (
+    "cd /opt/airflow/dbt && /opt/airflow/dbt_venv/bin/dbt"
+)
+DBT_FLAGS = "--profiles-dir . --target prod --target-path /tmp/dbt_target --log-path /tmp/dbt_logs"
 
 # Default DAG args
 default_args = {
@@ -55,7 +61,7 @@ with DAG(
     catchup=False,
     default_args=default_args,
     max_active_runs=1,
-    tags=['ecommerce', 'spark', 'kafka'],
+    tags=['ecommerce', 'spark', 'kafka', 'dbt'],
 ) as dag:
 
     extract_monthly_data = PythonOperator(
@@ -70,16 +76,19 @@ with DAG(
         provide_context=True,
     )
 
-    validate = PythonOperator(
-        task_id='validate_snowflake_table',
-        python_callable=validate_data,
+    # Fails if the Kafka sink has not landed new events recently
+    dbt_source_freshness = BashOperator(
+        task_id='dbt_source_freshness',
+        bash_command=f"{DBT} source freshness {DBT_FLAGS}",
     )
 
-    refresh = PythonOperator(
-        task_id='materialize_views',
-        python_callable=materialize_views,
+    # Builds staging and reporting models and runs every data test in DAG order:
+    # bad source data stops the run before it reaches the dashboard tables
+    dbt_build = BashOperator(
+        task_id='dbt_build',
+        bash_command=f"{DBT} build {DBT_FLAGS}",
     )
-    
+
     # Set dependencies
 
-    extract_monthly_data >> send_to_kafka_task >> validate >> refresh
+    extract_monthly_data >> send_to_kafka_task >> dbt_source_freshness >> dbt_build

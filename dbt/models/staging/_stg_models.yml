@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: stg_kafka__ecommerce_events
+    description: >
+      Cleaned, typed and deduplicated e-commerce events. The single source of
+      truth for every reporting table, so business logic lives in one place.
+    columns:
+      - name: event_id
+        description: Surrogate key (hash of event time, type, product, user and session).
+        tests:
+          - unique
+          - not_null
+      - name: event_at
+        tests:
+          - not_null
+      - name: event_date
+        tests:
+          - not_null
+      - name: event_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['view', 'cart', 'purchase', 'remove_from_cart']
+      - name: product_id
+        tests:
+          - not_null
+      - name: brand
+        description: Lower-cased brand; null when the source has no brand.
+      - name: price
+        description: Price in USD; missing prices are set to 0, matching the PySpark cleaning step.
+        tests:
+          - not_null
+          - non_negative
+      - name: user_id
+        tests:
+          - not_null
+      - name: user_session
+        tests:
+          - not_null

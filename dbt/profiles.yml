@@ -1,0 +1,23 @@
+ecommerce_analytics:
+  target: "{{ env_var('DBT_TARGET', 'prod') }}"
+  outputs:
+    # Production: the Snowflake account the Kafka sink connectors write to.
+    # Credentials come from the same environment variables Airflow already uses.
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', '') }}"
+      user: "{{ env_var('SNOWFLAKE_USERNAME', '') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'ecommerce_role') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', '') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ECOMMERCE_DB') }}"
+      schema: REPORTING
+      threads: 4
+      client_session_keep_alive: false
+
+    # CI and local development: an in-process DuckDB file loaded from seeds.
+    ci:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'target/ci.duckdb') }}"
+      schema: REPORTING
+      threads: 4
